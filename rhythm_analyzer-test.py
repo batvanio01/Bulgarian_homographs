@@ -136,114 +136,63 @@ class BulgarianStressPredictor:
         return score
 
     def process_sentence(self, sentence):
-        """ 
-        Разделя изречението на отделни фрази по запетаи/пунктуация.
-        Изчислява ритъма за всяка фраза ИЗОЛИРАНО, за да няма математически шум.
-        """
-        import re
+        """ Приема изречение, пази запетаите като физически паузи и намира точния ритъм. """
+        # Отделяме препинателните знаци с интервал, за да ги хванем като отделни елементи
+        raw_tokens = sentence.replace(".", " .").replace(",", " ,").replace("!", " !").replace("?", " ?").split()
         
-        # Регулярен израз, който цепи по препинателни знаци, но ги пази като разделители
-        # Резултатът ще е списък от фрази и пунктуация: ['Силната водна пара...', ',', ' а аз нямах...', '.']
-        tokens = re.split(r'([,\.\!?;])', sentence)
+        sentence_options = []
+        is_any_omograph = False
         
-        processed_parts = []
-        
-        for token in tokens:
-            if not token:
-                continue
-                
-            # Ако токенът е просто пунктуация, пазим го директно
-            if token in [",", ".", "!", "?", ";"]:
-                processed_parts.append(token)
-                continue
-                
-            # Почистваме празни пространства около фразата
-            phrase = token.strip()
-            if not phrase:
-                continue
-                
-            # Обработваме текущата фраза самостоятелно
-            words = phrase.split()
-            phrase_options = []
-            is_any_omograph = False
+        for token in raw_tokens:
+            token_lower = token.lower()
             
-            for idx, word in enumerate(words):
-                word_lower = word.lower()
+            # АКО Е ЗАПЕТАЯ ИЛИ ДРУГ ЗНАК - ТОВА Е ПАУЗА (ВЪЗДУХ)
+            if token in [",", ".", "!", "?"]:
+                sentence_options.append([{"text": token, "vector": [0.0, 0.0, 0.0, 0.0]}])
+            
+            elif token_lower in self.database:
+                variants = self.database[token_lower]
                 
-                if word_lower in self.database:
-                    variants = self.database[word_lower]
-                    
-                    # ПРАВИЛО ЗА ИМЕТО "ЕДНА" (Пази се от предната версия)
-                    # Тъй като сме вътре във фраза, проверяваме дали е с главна буква
-                    if word_lower == "една" and word[0].isupper():
-                        # Ако е в началото на цялото изречение (първа дума), математиката ще реши.
-                        # Но ако пред нея във фразата има друга дума, гарантирано е име.
-                        if idx > 0:
-                            name_variants = [v for v in variants if any(c.isupper() for c in v['text'])]
-                            if name_variants:
-                                phrase_options.append(name_variants)
-                                continue
-                    
-                    # КОРЕКЦИЯ ЗА ЛЕКИТЕ ДУМИ (Буфер 450Hz)
-                    if word_lower in self.clitics or word_lower == "една":
-                        clitic_variants = []
-                        for v in variants:
-                            clean_vector = [450.0 if x == 750.0 else x for x in v['vector']]
-                            clitic_variants.append({'text': v['text'].lower(), 'vector': clean_vector})
-                        phrase_options.append(clitic_variants)
-                    else:
-                        phrase_options.append(variants)
-                        if len(variants) > 1:
-                            is_any_omograph = True
+                # Корекция за малките думи (буфер от 450Hz)
+                if token_lower in self.clitics:
+                    clitic_variants = []
+                    for v in variants:
+                        clean_vector = [450.0 if x == 750.0 else x for x in v['vector']]
+                        clitic_variants.append({'text': v['text'].lower(), 'vector': clean_vector})
+                    sentence_options.append(clitic_variants)
                 else:
-                    # Защита за непознати думи (сричково броене, за да пази разстоянието)
-                    vowels = "аоеиуъяюАОЕИУЪЯЮ"
-                    syllable_count = sum(1 for char in word if char in vowels)
-                    if syllable_count == 0: syllable_count = 1
-                    fake_vector = [350.0] * syllable_count
-                    phrase_options.append([{"text": word, "vector": fake_vector}])
-            
-            # Ако във фразата няма омографи, взимаме първия вариант
-            if not is_any_omograph:
-                best_phrase_text = " ".join([opt[0]['text'] for opt in phrase_options])
-                processed_parts.append(best_phrase_text)
-                continue
-                
-            # Генерираме комбинации САМО за тази фраза
-            all_combinations = list(itertools.product(*phrase_options))
-            best_score = -99999
-            best_phrase_text = phrase
-            
-            for combo in all_combinations:
-                full_vector = []
-                text_parts = []
-                
-                for word_info in combo:
-                    full_vector.extend(word_info["vector"])
-                    full_vector.append(0) # Интервал
-                    text_parts.append(word_info["text"])
-                    
-                current_score = self.calculate_rhythm_score(combo, full_vector)
-                
-                if current_score > best_score:
-                    best_score = current_score
-                    best_phrase_text = " ".join(text_parts)
-                    
-            processed_parts.append(best_phrase_text)
-            
-        # Сглобяваме изречението обратно, като коригираме интервалите пред знаците
-        final_sentence = ""
-        for part in processed_parts:
-            if part in [",", ".", "!", "?", ";", "-"]:
-                final_sentence = final_sentence.rstrip() + part + " "
+                    sentence_options.append(variants)
+                    if len(variants) > 1:
+                        is_any_omograph = True
             else:
-                final_sentence += part + " "
-
-#           print()
+                sentence_options.append([{'text': token, 'vector': [0, 0, 0]}])
                 
-        return final_sentence.strip()
-#       return final_sentence
-
+        if not is_any_omograph:
+            final_sentence = " ".join([opt[0]['text'] for opt in sentence_options])
+            return final_sentence.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?")
+            
+        all_combinations = list(itertools.product(*sentence_options))
+        best_score = -99999
+        best_text_version = sentence
+        
+        for combo in all_combinations:
+            full_vector = []
+            text_parts = []
+            
+            for word_info in combo:
+                full_vector.extend(word_info['vector'])
+                full_vector.append(0)  # Интервал между думите
+                text_parts.append(word_info['text'])
+                
+            current_score = self.calculate_rhythm_score(combo, full_vector)
+            
+            if current_score > best_score:
+                best_score = current_score
+                best_text_version = " ".join(text_parts)
+                
+        # Почистваме интервалите пред запетаите на изхода
+        best_text_version = best_text_version.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?")
+        return best_text_version
 # -------------------------------------------------------------
 if __name__ == "__main__":
     predictor = BulgarianStressPredictor()
