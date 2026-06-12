@@ -144,7 +144,7 @@ class BulgarianStressPredictor:
         
         # Регулярен израз, който цепи по препинателни знаци, но ги пази като разделители
         # Резултатът ще е списък от фрази и пунктуация: ['Силната водна пара...', ',', ' а аз нямах...', '.']
-        tokens = re.split(r'([,\.\!?;\])', sentence)
+        tokens = re.split(r'([,\.\!?;])', sentence)
         
         processed_parts = []
         
@@ -238,67 +238,12 @@ class BulgarianStressPredictor:
                 final_sentence = final_sentence.rstrip() + part + " "
             else:
                 final_sentence += part + " "
+
+#           print()
                 
         return final_sentence.strip()
+#       return final_sentence
 
-    def process_sentence(self, sentence):
-        """ Приема изречение, пази запетаите като физически паузи и намира точния ритъм. """
-        # Отделяме препинателните знаци с интервал, за да ги хванем като отделни елементи
-        raw_tokens = sentence.replace(".", " .").replace(",", " ,").replace("!", " !").replace("?", " ?").split()
-        
-        sentence_options = []
-        is_any_omograph = False
-        
-        for token in raw_tokens:
-            token_lower = token.lower()
-            
-            # АКО Е ЗАПЕТАЯ ИЛИ ДРУГ ЗНАК - ТОВА Е ПАУЗА (ВЪЗДУХ)
-            if token in [",", ".", "!", "?"]:
-                sentence_options.append([{"text": token, "vector": [0.0, 0.0, 0.0, 0.0]}])
-            
-            elif token_lower in self.database:
-                variants = self.database[token_lower]
-                
-                # Корекция за малките думи (буфер от 450Hz)
-                if token_lower in self.clitics:
-                    clitic_variants = []
-                    for v in variants:
-                        clean_vector = [450.0 if x == 750.0 else x for x in v['vector']]
-                        clitic_variants.append({'text': v['text'].lower(), 'vector': clean_vector})
-                    sentence_options.append(clitic_variants)
-                else:
-                    sentence_options.append(variants)
-                    if len(variants) > 1:
-                        is_any_omograph = True
-            else:
-                sentence_options.append([{'text': token, 'vector': [0, 0, 0]}])
-                
-        if not is_any_omograph:
-            final_sentence = " ".join([opt[0]['text'] for opt in sentence_options])
-            return final_sentence.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?")
-            
-        all_combinations = list(itertools.product(*sentence_options))
-        best_score = -99999
-        best_text_version = sentence
-        
-        for combo in all_combinations:
-            full_vector = []
-            text_parts = []
-            
-            for word_info in combo:
-                full_vector.extend(word_info['vector'])
-                full_vector.append(0)  # Интервал между думите
-                text_parts.append(word_info['text'])
-                
-            current_score = self.calculate_rhythm_score(combo, full_vector)
-            
-            if current_score > best_score:
-                best_score = current_score
-                best_text_version = " ".join(text_parts)
-                
-        # Почистваме интервалите пред запетаите на изхода
-        best_text_version = best_text_version.replace(" ,", ",").replace(" .", ".").replace(" !", "!").replace(" ?", "?")
-        return best_text_version
 # -------------------------------------------------------------
 if __name__ == "__main__":
     predictor = BulgarianStressPredictor()
